@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.env
+.venv
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Project specific
+chroma_db/
+rag_config.json
+user_config.json
+prompt_history.json
+*.log
+
+# VS Code
+.vscode/
