@@ -26,6 +26,120 @@
     *   **Prompt 历史**：一键保存满意的 Prompt，随时在“历史记录”页查看或删除。
 *   **🚀 极简启动**：提供 Windows 一键启动脚本，无需懂代码也能轻松使用。
 
+## 🚀 部署指南
+
+### 📋 第一次部署清单
+
+在开始使用本项目前，请确保你已准备好以下内容：
+
+#### 1. 环境准备
+- ✅ **Python 3.8+** 已安装
+- ✅ **Git** 已安装（用于克隆项目）
+- ✅ **稳定的网络连接**（用于下载依赖和API调用）
+
+#### 2. API服务准备
+- ✅ **DeepSeek API** 或 **SiliconFlow API** 账户
+- ✅ **有效的API Key**（DeepSeek或SiliconFlow）
+- ✅ **账户余额充足**（API调用会产生费用）
+
+#### 3. 硬件要求
+- ✅ **至少4GB RAM**（推荐8GB+）
+- ✅ **网络连接稳定**（用于API调用和模型下载）
+
+### 🛠️ 详细部署步骤
+
+#### 步骤1：获取项目代码
+```bash
+# 克隆项目到本地
+git clone https://github.com/wzp-123777/DeepSeek-RAG-Character-Gen.git
+
+# 进入项目目录
+cd DeepSeek-RAG-Character-Gen
+```
+
+#### 步骤2：创建虚拟环境（推荐）
+```bash
+# 创建虚拟环境
+python -m venv venv
+
+# 激活虚拟环境
+# Windows:
+venv\Scripts\activate
+# Linux/Mac:
+# source venv/bin/activate
+```
+
+#### 步骤3：安装依赖
+```bash
+# 安装所有必需的Python包
+pip install -r requirements.txt
+```
+
+#### 步骤4：获取API Key
+1. **DeepSeek API**：
+   - 访问 [DeepSeek 官网](https://platform.deepseek.com/)
+   - 注册账户并获取 API Key
+
+2. **SiliconFlow API**（推荐）：
+   - 访问 [SiliconFlow 官网](https://siliconflow.cn/)
+   - 注册账户并获取 API Key
+   - 推荐充值少量金额（¥10-20）用于测试
+
+#### 步骤5：首次运行测试
+```bash
+# 运行应用
+streamlit run app.py
+```
+
+#### 步骤6：配置API
+1. 在浏览器中打开 `http://localhost:8501`
+2. 在左侧边栏选择 LLM 提供商（DeepSeek 或 SiliconFlow）
+3. 输入你的 API Key
+4. 选择合适的对话模型
+5. 测试连接是否成功
+
+#### 步骤7：构建知识库（可选）
+如果要使用RAG功能：
+1. 上传小说、剧本等文本文件
+2. 选择Embedding模式（推荐使用SiliconFlow的云端API）
+3. 点击"构建/更新知识库"
+
+#### 步骤8：开始使用
+- 🎭 **角色提示词生成**：基于知识库生成角色设定
+- 🤖 **QQ角色生成**：通过对话创建QQ聊天角色
+- 💬 **自由对话**：与AI进行一般对话
+
+### 🐛 常见问题解决
+
+#### 问题1：依赖安装失败
+```bash
+# 升级pip
+pip install --upgrade pip
+
+# 使用国内镜像加速
+pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple/
+```
+
+#### 问题2：Streamlit启动失败
+```bash
+# 检查端口是否被占用
+netstat -ano | findstr :8501
+
+# 使用不同端口启动
+streamlit run app.py --server.port 8502
+```
+
+#### 问题3：API连接失败
+- 检查API Key是否正确
+- 确认账户余额充足
+- 检查网络连接是否正常
+- 尝试更换API提供商
+
+#### 问题4：内存不足
+- 关闭其他程序
+- 使用云端Embedding模式而非本地模式
+- 减少同时处理的文件数量
+
 ## 🛠️ 安装与运行
 
 ### 方法一：Windows 一键启动（推荐）
