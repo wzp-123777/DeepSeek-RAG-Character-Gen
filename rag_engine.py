@@ -2,11 +2,14 @@ import os
 import shutil
 import chromadb
 import warnings
+import requests
+from bs4 import BeautifulSoup
+from urllib.parse import urljoin, urlparse
 
 # 忽略 tiktoken 的模型警告
 warnings.filterwarnings("ignore", category=UserWarning, message=".*model not found. Using cl100k_base encoding.*")
 
-from langchain_community.document_loaders import TextLoader, PyPDFLoader, Docx2txtLoader
+from langchain_community.document_loaders import TextLoader, PyPDFLoader, Docx2txtLoader, WebBaseLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.embeddings import OpenAIEmbeddings
@@ -66,15 +69,34 @@ class RAGEngine:
             
             try:
                 if ext == ".txt":
-                    loader = TextLoader(file_path, encoding="utf-8", autodetect_encoding=True)
+                    # 针对大文件优化：优先尝试常见编码，避免自动检测超时
+                    success = False
+                    for enc in ["utf-8", "gb18030", "gbk"]:
+                        try:
+                            loader = TextLoader(file_path, encoding=enc)
+                            docs = loader.load()
+                            documents.extend(docs)
+                            success = True
+                            break
+                        except Exception:
+                            continue
+                    
+                    if not success:
+                        # 最后尝试自动检测
+                        loader = TextLoader(file_path, autodetect_encoding=True)
+                        docs = loader.load()
+                        documents.extend(docs)
+                        
                 elif ext == ".pdf":
                     loader = PyPDFLoader(file_path)
+                    if loader:
+                        docs = loader.load()
+                        documents.extend(docs)
                 elif ext in [".docx", ".doc"]:
                     loader = Docx2txtLoader(file_path)
-                
-                if loader:
-                    docs = loader.load()
-                    documents.extend(docs)
+                    if loader:
+                        docs = loader.load()
+                        documents.extend(docs)
             except Exception as e:
                 print(f"处理文件 {file_path} 时出错: {e}")
                 return f"Error loading {file_path}: {str(e)}"
@@ -86,22 +108,118 @@ class RAGEngine:
         split_docs = self.text_splitter.split_documents(documents)
         return split_docs
 
+    def load_urls(self, urls, fetch_links=False):
+        """
+        加载并切分网页内容
+        """
+        target_urls = []
+        if fetch_links:
+            # 如果是目录页，先抓取链接
+            for url in urls:
+                try:
+                    print(f"正在分析目录页: {url}")
+                    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
+                    response = requests.get(url, headers=headers, timeout=10)
+                    response.encoding = response.apparent_encoding # Fix encoding
+                    soup = BeautifulSoup(response.text, 'html.parser')
+                    
+                    # 提取所有链接
+                    links = soup.find_all('a')
+                    chapter_links = []
+                    
+                    base_domain = urlparse(url).netloc
+                    
+                    for link in links:
+                        href = link.get('href')
+                        text = link.get_text().strip()
+                        
+                        if not href or href.startswith('javascript') or href.startswith('#'):
+                            continue
+                            
+                        full_url = urljoin(url, href)
+                        
+                        # 简单的过滤规则：
+                        # 1. 必须是同域名
+                        # 2. 文本长度适中 (章节名通常不会太长)
+                        if urlparse(full_url).netloc == base_domain:
+                            # 关键词过滤 (可选，但为了通用性先不做太死)
+                            if 2 < len(text) < 50: 
+                                chapter_links.append(full_url)
+                    
+                    # 去重
+                    chapter_links = list(set(chapter_links))
+                    print(f"找到 {len(chapter_links)} 个潜在章节链接")
+                    target_urls.extend(chapter_links)
+                    
+                except Exception as e:
+                    print(f"解析目录页 {url} 失败: {e}")
+                    # 如果解析失败，至少把目录页本身加进去
+                    target_urls.append(url)
+        else:
+            target_urls = urls
+
+        if not target_urls:
+            return "没有找到有效的网页链接。"
+
+        documents = []
+        try:
+            print(f"准备抓取 {len(target_urls)} 个页面...")
+            # 使用 WebBaseLoader 批量抓取
+            # 注意：如果链接非常多，可能会很慢
+            loader = WebBaseLoader(target_urls)
+            loader.requests_kwargs = {'headers': {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}}
+            loader.requests_per_second = 5 # 限制并发
+            
+            documents = loader.load()
+        except Exception as e:
+            print(f"处理网页时出错: {e}")
+            return f"Error loading URLs: {str(e)}"
+        
+        if not documents:
+            return "没有成功加载任何网页内容。"
+
+        # 切分文档
+        split_docs = self.text_splitter.split_documents(documents)
+        return split_docs
+
     def build_vector_store(self, documents, collection_name="character_data"):
         """
-        建立向量数据库
+        建立向量数据库 (带速率限制保护)
         """
         if not documents:
             return "没有文档可用于构建向量库。"
 
         try:
-            # 使用 client 创建或获取 collection
-            # 注意：LangChain 的 Chroma 封装会自动处理 client
-            vector_store = Chroma.from_documents(
-                documents=documents,
-                embedding=self.embeddings,
+            import time
+            
+            # 初始化 vector_store
+            vector_store = Chroma(
+                embedding_function=self.embeddings,
                 client=self.client,
                 collection_name=collection_name
             )
+            
+            # 分批处理，避免触发 API 速率限制 (429)
+            batch_size = 10  # 每次处理 10 个片段
+            total_docs = len(documents)
+            
+            print(f"开始构建向量库，共 {total_docs} 个片段，分批处理中...")
+            
+            for i in range(0, total_docs, batch_size):
+                batch = documents[i : i + batch_size]
+                try:
+                    vector_store.add_documents(batch)
+                    # 简单的速率限制：每批处理完暂停 0.5 秒
+                    # 如果是 API 模式，这个暂停很重要
+                    time.sleep(0.5) 
+                except Exception as batch_error:
+                    print(f"批次 {i} 处理失败: {batch_error}")
+                    # 遇到 429 错误时，尝试等待更久后重试一次
+                    if "429" in str(batch_error):
+                        print("触发速率限制，等待 5 秒后重试...")
+                        time.sleep(5)
+                        vector_store.add_documents(batch)
+            
             return f"成功构建知识库 '{collection_name}'，包含 {len(documents)} 个片段。"
         except Exception as e:
             return f"构建向量库失败: {str(e)}"
@@ -146,6 +264,16 @@ class RAGEngine:
                 unique_results.append(doc)
         
         return unique_results[:k] # 返回前 k 个（这里其实不太准确，因为没有全局排序）
+
+    def delete_collection(self, collection_name):
+        """
+        删除指定的知识库
+        """
+        try:
+            self.client.delete_collection(collection_name)
+            return True, f"已删除知识库: {collection_name}"
+        except Exception as e:
+            return False, f"删除失败: {str(e)}"
 
     def clear_database(self):
         if os.path.exists(self.persist_directory):
